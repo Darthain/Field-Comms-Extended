@@ -50,9 +50,6 @@ jobs:
         7z x DXSDK_Jun10.exe DXSDK/Include DXSDK/Lib -odxsdk -y | Out-Null
         echo "DXSDK_DIR=${{ github.workspace }}\dxsdk\DXSDK\" >> $env:GITHUB_ENV
 
-    - name: Add MSBuild to PATH
-      uses: microsoft/setup-msbuild@v2
-
     - name: Build (x86)
       if: matrix.arch == 'x86'
       shell: pwsh
@@ -60,7 +57,8 @@ jobs:
         mkdir acre2\extensions\vcproj -Force | Out-Null
         cd acre2\extensions\vcproj
         cmake .. -A Win32
-        msbuild ACRE.sln /m '/t:ACRE2\ACRE2TS' /p:Configuration=RelWithDebInfo
+        # build through CMake: newer Visual Studio writes ACRE.slnx, not ACRE.sln, so calling msbuild on the .sln fails
+        cmake --build . --config RelWithDebInfo --target ACRE2TS -- /m
 
     - name: Build (x64)
       if: matrix.arch == 'x64'
@@ -69,7 +67,8 @@ jobs:
         mkdir acre2\extensions\vcproj64 -Force | Out-Null
         cd acre2\extensions\vcproj64
         cmake .. -A x64
-        msbuild ACRE.sln /m '/t:ACRE2\ACRE2TS' /p:Configuration=RelWithDebInfo
+        # build through CMake: newer Visual Studio writes ACRE.slnx, not ACRE.sln, so calling msbuild on the .sln fails
+        cmake --build . --config RelWithDebInfo --target ACRE2TS -- /m
 
     - name: Upload plugin
       uses: actions/upload-artifact@v4
