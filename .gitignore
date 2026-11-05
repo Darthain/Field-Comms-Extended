@@ -1,0 +1,16 @@
+# Build output
+.hemttout/
+releases/
+*.pbo
+*.zip
+
+# Signing: never commit private keys
+*.biprivatekey
+*.bisign
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store
