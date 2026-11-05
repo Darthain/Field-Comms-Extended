@@ -54,9 +54,10 @@ GVAR(SQ) = ["SQ", "SQ", "Squelch Settings",
             ],
             [
                 {
-                    // Need to pull the current squelch type and check if its digital currently
-                    // As there is no digital currently (and the value is not saved), we are going with OFF all the time
-                    SET_STATE("menuSelection",1);
+                    // FCE: show the saved digital squelch setting (0 = ON, 1 = OFF).
+                    private _sel = 1;
+                    if (GET_STATE_DEF("digitalSquelch",false) isEqualTo true) then { _sel = 0; };
+                    SET_STATE("menuSelection",_sel);
                 }, // onEntry
                 nil,
                 nil
@@ -84,8 +85,10 @@ GVAR(SQ) = ["SQ", "SQ", "Squelch Settings",
 
         SCRATCH_SET(GVAR(currentRadioID),"sq_select_digital",nil);
 
+        // FCE: digital squelch is saved on the radio (synced); ON then asks for the digital squelch code.
+        SET_STATE_CRIT("digitalSquelch",_selectDigital);
         if (_selectDigital) exitWith {
-            ["NOT_IMPLEMENTED"] call FUNC(changeMenu);
+            ["SQ_DIGITAL_CODE"] call FUNC(changeMenu);
             true
         };
 
@@ -95,6 +98,48 @@ GVAR(SQ) = ["SQ", "SQ", "Squelch Settings",
     "PGM_NORM_LOS"
 ];
 [GVAR(SQ)] call FUNC(createMenu);
+
+// FCE: digital squelch code (1-8). Radios with digital squelch on only open for transmissions carrying their
+// code (see radio/fnc_handleMultipleTransmissions.sqf); every radio transmits its own code (1 unless set).
+GVAR(SQ_DIGITAL_CODE) = ["SQ_DIGITAL_CODE", "SQ_DIGITAL_CODE", "Digital Squelch Code",
+    MENUTYPE_ACTIONSERIES,
+    [
+        [nil, "SQ_SELECT_DIGITAL_CODE", "",
+            MENUTYPE_SELECTION,
+            [
+                [ROW_LARGE_2, ALIGN_CENTER, "DIGITAL SQ CODE"],
+                [ROW_LARGE_3, ALIGN_CENTER, "%1"],
+                [ROW_SMALL_5, ALIGN_CENTER, "^ TO SCROLL / ENT TO CONT"]
+            ],
+            [
+                {
+                    SET_STATE("menuSelection",(GET_STATE_DEF("digitalSquelchCode",1) - 1) max 0);
+                }, // onEntry
+                nil,
+                nil
+            ],
+            [
+                ["1", "2", "3", "4", "5", "6", "7", "8"],
+                [ROW_LARGE_3, 0, -1]
+            ],
+            "sq_select_digital_code"
+        ]
+    ],
+    [
+        nil,
+        nil
+    ],
+    {
+        private _code = SCRATCH_GET(GVAR(currentRadioID),"sq_select_digital_code");
+        if (isNil "_code") then { _code = "1"; };
+        SET_STATE_CRIT("digitalSquelchCode",parseNumber _code);
+        SCRATCH_SET(GVAR(currentRadioID),"sq_select_digital_code",nil);
+        ["SQ_NO_DIGITAL"] call FUNC(changeMenu);
+        true
+    },
+    "PGM_NORM_LOS"
+];
+[GVAR(SQ_DIGITAL_CODE)] call FUNC(createMenu);
 
 
 

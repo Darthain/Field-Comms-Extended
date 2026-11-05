@@ -32,7 +32,9 @@ if (isNil "_subMenuList") exitWith {};
 // If there are submenus, loop
 {
     private _subMenu_id = MENU_ID(_x);
-    if (! isNil "_subMenu_id" ) then {
+    // FCE: only named entries are sub-menus. A static screen's text rows start with a row number and have
+    // no menu type, so checking their type errored.
+    if (!isNil "_subMenu_id" && {_subMenu_id isEqualType ""}) then {
         if (MENU_TYPE(_x) == MENUTYPE_DISPLAY ||
         {MENU_TYPE(_x) == MENUTYPE_LIST} ||
         {MENU_TYPE(_x) == MENUTYPE_ACTIONSERIES}) then {

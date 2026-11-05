@@ -23,3 +23,8 @@ Thumbs.db
 *.out
 *.zip
 *.sqfc
+
+# Field Comms Extended additions
+*.bisign
+.idea/
+.DS_Store

@@ -51,6 +51,7 @@ class CfgAcreComponents {
                 getStates = QFUNC(getStates);                // [] = [ [stateName, stateData], [stateName, stateData] ]
                 getState = QFUNC(getState);                // [stateName] = stateData
                 setState = QFUNC(setState);                // [stateName, stateData] = sets state
+                setStateCritical = QFUNC(setState);        // FCE: as on the PRC-148; without it, critical (synced) state changes were never stored
 
                 getOnOffState = QFUNC(getOnOffState);            // [] = 0/1
                 setOnOffState = QFUNC(setOnOffState);            // [ZeroOrOne]

@@ -153,6 +153,22 @@ if (_transmissionsChanged) then {
             };
         } forEach _sortedRadios;
 
+        // FCE: digital squelch. With it on, only transmissions carrying this radio's digital squelch code
+        // open it; others move to junk, so they still interfere as non-matching traffic would.
+        // (State is read from the receiving radio itself, not the radio open on screen.)
+        private _dsq = [_radioId, "getState", "digitalSquelch"] call EFUNC(sys_data,dataEvent);
+        if (!isNil "_dsq" && {_dsq isEqualTo true}) then {
+            private _code = [_radioId, "getState", "digitalSquelchCode"] call EFUNC(sys_data,dataEvent);
+            if (isNil "_code") then { _code = 1; };
+            private _matching = _hearableTransmissions select {
+                private _txCode = [_x select 1, "getState", "digitalSquelchCode"] call EFUNC(sys_data,dataEvent);
+                if (isNil "_txCode") then { _txCode = 1; };
+                _txCode isEqualTo _code
+            };
+            _junkTransmissions = _junkTransmissions + (_hearableTransmissions - _matching);
+            _hearableTransmissions = _matching;
+        };
+
         //diag_log text format["sorted: %1", _sortedRadios];
         //diag_log text format["junk: %1", _junkTransmissions];
         //diag_log text format["ok: %1", _hearableTransmissions];

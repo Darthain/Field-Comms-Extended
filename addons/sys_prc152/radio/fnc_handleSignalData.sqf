@@ -30,8 +30,8 @@ if (
     {HASH_GET(_radioRxData,"TEK") == HASH_GET(_radioTxData,"TEK")} &&
     {HASH_GET(_radioRxData,"trafficRate") == HASH_GET(_radioTxData,"trafficRate")} &&
     {(
-        HASH_GET(_rxChannel,"CTCSSRx") == HASH_GET(_radioTxData,"CTCSSTx") ||
-        {HASH_GET(_rxChannel,"CTCSSRx") == 0}
+        HASH_GET(_radioRxData,"CTCSSRx") == HASH_GET(_radioTxData,"CTCSSTx") ||
+        {HASH_GET(_radioRxData,"CTCSSRx") == 0}
     )}
 ) then {
     _hearableTransmission = SCRATCH_GET(_rxId,"hearableTransmission");

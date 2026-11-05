@@ -1,12 +1,11 @@
-name = "ACRE2"
+name = "Field Comms Extended"
 mainprefix = "idi"
 prefix = "acre"
 author = "ACRE2 Team"
 
 [files]
 include = [
-    "*.dll",
-    "mod.cpp",
+        "mod.cpp",
     "README.md",
     "LICENSE",
     "acre_logo_medium_ca.paa",
@@ -20,7 +19,7 @@ include = [
 git_hash = 0
 
 [hemtt.release]
-folder = "acre2"
+folder = "field_comms_extended"
 
 [hemtt.launch.default]
 workshop = [
