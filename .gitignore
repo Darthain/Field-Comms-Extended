@@ -1,16 +1,25 @@
-# Build output
-.hemttout/
-releases/
+release/*
+releases/*
+hemtt
+hemtt.exe
+.hemttout
+symbols/*
+keys/*
+.hemtt/local
+hemtt.toml
+idi/*
+a3/*
+*.cache
 *.pbo
-*.zip
-
-# Signing: never commit private keys
-*.biprivatekey
-*.bisign
-
-# Editors / OS
-.vscode/
-.idea/
+texHeaders.bin
 *.swp
+*.swo
+*.biprivatekey
+*.hemttprivatekey
 Thumbs.db
-.DS_Store
+*.dll
+*.exe
+*.vscode*
+*.out
+*.zip
+*.sqfc

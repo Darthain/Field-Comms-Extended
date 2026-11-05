@@ -1,0 +1,18 @@
+[config.file_type]
+enabled = false
+
+[stringtables.usage]
+options.ignore_unused = true
+
+[sqf.banned_commands]
+options.ignore = [
+    "addPublicVariableEventHandler", # Alt syntax is broken, we are using main syntax
+]
+
+[sqf.this_call]
+enabled = "pedantic"
+
+[sqf.var_all_caps]
+options.ignore = [
+    "ACRE_*"
+]

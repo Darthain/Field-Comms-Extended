@@ -1,0 +1,48 @@
+#ifdef _WIN32
+    #include "Macros.h"
+    #include <windows.h>
+
+    #ifndef DEBUG
+    #define VER_DEBUG                   0
+    #else
+    #define VER_DEBUG                   VS_FF_DEBUG
+    #endif
+
+    VS_VERSION_INFO VERSIONINFO
+    FILEVERSION                ACRE_VERSION_MAJOR, ACRE_VERSION_MINOR, ACRE_VERSION_SUBMINOR
+    PRODUCTVERSION             ACRE_VERSION_MAJOR, ACRE_VERSION_MINOR, ACRE_VERSION_SUBMINOR
+    FILEFLAGSMASK              VS_FFI_FILEFLAGSMASK
+    FILEFLAGS                  (VS_FF_PRIVATEBUILD|VS_FF_PRERELEASE|VER_DEBUG)
+    FILEOS                     VOS__WINDOWS32
+    FILETYPE                   VFT_DLL
+    FILESUBTYPE                VFT2_UNKNOWN
+    BEGIN
+        BLOCK "StringFileInfo"
+        BEGIN
+            BLOCK "040904E4"
+            BEGIN
+                VALUE "CompanyName",          ACRE_COMPANY
+                VALUE "FileDescription",      ACRE_NAME
+                VALUE "FileVersion",          ACRE_VERSION
+                VALUE "ProductName",          ACRE_NAME
+                VALUE "ProductVersion",       ACRE_VERSION
+                VALUE "LegalCopyright",       ACRE_COPYRIGHT
+                VALUE "Build Date",           "@ACRE_BUILDSTAMP@"
+            END
+        END
+
+        BLOCK "VarFileInfo"
+        BEGIN
+            /* The following line should only be modified for localized versions.     */
+            /* It consists of any number of WORD,WORD pairs, with each pair           */
+            /* describing a language,codepage combination supported by the file.      */
+            /*                                                                        */
+            /* For example, a file might have values "0x409,1252" indicating that it  */
+            /* supports English language (0x409) in the Windows ANSI codepage (1252). */
+
+            VALUE "Translation", 0x409, 1252
+
+        END
+    END
+
+#endif
