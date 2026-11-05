@@ -1,0 +1,75 @@
+# Field Comms Extended: builds ACRE's TeamSpeak plugin (acre2_win32.dll / acre2_win64.dll) from the ACRE2 source this
+# fork is based on, with Field Comms Extended's plugin changes (plugin/voice-replay.patch) applied.
+# Only the TeamSpeak plugin is rebuilt: ACRE's game-side DLLs (BattlEye-signed by IDI-Systems) stay as released.
+#
+# Run it from the Actions tab (workflow_dispatch) or by pushing a tag. The DLLs come out as the "plugin" artifact:
+# copy them into the mod's plugin\ folder, replacing ACRE's.
+name: Build TeamSpeak plugin
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+env:
+  ACRE_TAG: v2.14.0.1064    # must match the ACRE version the fork's addons are built from (ACRE checks the plugin version)
+
+jobs:
+  plugin:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        arch: [x86, x64]
+    steps:
+    - name: Check out Field Comms Extended
+      uses: actions/checkout@v4
+      with:
+        path: fce
+
+    - name: Check out ACRE2 ${{ env.ACRE_TAG }}
+      uses: actions/checkout@v4
+      with:
+        repository: IDI-Systems/acre2
+        ref: ${{ env.ACRE_TAG }}
+        path: acre2
+
+    - name: Apply Field Comms Extended plugin changes
+      shell: bash
+      run: |
+        cd acre2
+        git apply --whitespace=nowarn ../fce/plugin/voice-replay.patch
+        git diff --stat
+
+    - name: DirectX SDK (June 2010) - ACRE's build needs its headers and libs
+      shell: pwsh
+      run: |
+        Invoke-WebRequest -Uri "https://download.microsoft.com/download/A/E/7/AE743F1F-632B-4809-87A9-AA1BB3458E31/DXSDK_Jun10.exe" -OutFile DXSDK_Jun10.exe
+        7z x DXSDK_Jun10.exe DXSDK/Include DXSDK/Lib -odxsdk -y | Out-Null
+        echo "DXSDK_DIR=${{ github.workspace }}\dxsdk\DXSDK\" >> $env:GITHUB_ENV
+
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Build (x86)
+      if: matrix.arch == 'x86'
+      shell: pwsh
+      run: |
+        mkdir acre2\extensions\vcproj -Force | Out-Null
+        cd acre2\extensions\vcproj
+        cmake .. -A Win32
+        msbuild ACRE.sln /m '/t:ACRE2\ACRE2TS' /p:Configuration=RelWithDebInfo
+
+    - name: Build (x64)
+      if: matrix.arch == 'x64'
+      shell: pwsh
+      run: |
+        mkdir acre2\extensions\vcproj64 -Force | Out-Null
+        cd acre2\extensions\vcproj64
+        cmake .. -A x64
+        msbuild ACRE.sln /m '/t:ACRE2\ACRE2TS' /p:Configuration=RelWithDebInfo
+
+    - name: Upload plugin
+      uses: actions/upload-artifact@v4
+      with:
+        name: plugin-${{ matrix.arch }}
+        path: acre2/plugin/*.dll
