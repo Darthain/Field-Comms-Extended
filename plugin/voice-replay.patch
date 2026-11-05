@@ -1,0 +1,380 @@
+diff --git a/extensions/src/ACRE2Core/Engine.cpp b/extensions/src/ACRE2Core/Engine.cpp
+index b616c40..2bd4110 100644
+--- a/extensions/src/ACRE2Core/Engine.cpp
++++ b/extensions/src/ACRE2Core/Engine.cpp
+@@ -33,6 +33,7 @@
+ #include "getVOIPChannelName.h"
+ #include "getVOIPChannelUID.h"
+ #include "getVOIPServerUID.h"
++#include "fce_voiceReplay.h" // Field Comms Extended
+ #include <shlobj.h>
+ 
+ acre::Result CEngine::initialize(IClient *client, IServer *externalServer, std::string fromPipeName, std::string toPipeName) {
+@@ -92,6 +93,10 @@ acre::Result CEngine::initialize(IClient *client, IServer *externalServer, std::
+     this->getRpcEngine()->addProcedure(new getVOIPChannelName());
+     this->getRpcEngine()->addProcedure(new getVOIPChannelUID());
+     this->getRpcEngine()->addProcedure(new getVOIPServerUID());
++    // Field Comms Extended: voice replay
++    this->getRpcEngine()->addProcedure(new fce_setVoiceReplay());
++    this->getRpcEngine()->addProcedure(new fce_playVoiceReplay());
++    this->getRpcEngine()->addProcedure(new fce_clearVoiceReplay());
+ 
+     // Initialize the client, because it never was derp
+     this->getClient()->initialize();
+@@ -134,6 +139,7 @@ acre::Result CEngine::start(const acre::id_t id) {
+ acre::Result CEngine::stop() {
+     LOG("Engine Shutting Down");
+     this->setState(acre::State::stopping);
++    CVoiceReplay::getInstance()->setConsent(false, std::set<uint32_t>()); // Field Comms Extended: forget every clip
+ 
+     if (this->getClient()) {
+         this->getClient()->enableMicrophone(true);        // unmute local microphone on stopping
+diff --git a/extensions/src/ACRE2Core/SoundEngine.cpp b/extensions/src/ACRE2Core/SoundEngine.cpp
+index d075714..26636ad 100644
+--- a/extensions/src/ACRE2Core/SoundEngine.cpp
++++ b/extensions/src/ACRE2Core/SoundEngine.cpp
+@@ -1,6 +1,7 @@
+ #include "SoundEngine.h"
+ #include "AcreSettings.h"
+ #include "Engine.h"
++#include "VoiceReplay.h" // Field Comms Extended
+ 
+ typedef std::numeric_limits<short int> LIMITER;
+ 
+@@ -28,6 +29,9 @@ acre::Result CSoundEngine::onEditPlaybackVoiceDataEvent(acre::id_t id, short* sa
+         }
+     }
+ 
++    // Field Comms Extended: voice replay keeps a little of opted-in players' clean voice, in memory (VoiceReplay.h)
++    CVoiceReplay::getInstance()->capture(static_cast<uint32_t>(id), samples, sampleCount, channels);
++
+     auto it = CEngine::getInstance()->speakingList.find(id);
+     CEngine::getInstance()->getSoundEngine()->getSoundMixer()->lock();
+     if (it != CEngine::getInstance()->speakingList.end()) {
+diff --git a/extensions/src/ACRE2Core/VoiceReplay.cpp b/extensions/src/ACRE2Core/VoiceReplay.cpp
+new file mode 100644
+index 0000000..269ccfc
+--- /dev/null
++++ b/extensions/src/ACRE2Core/VoiceReplay.cpp
+@@ -0,0 +1,119 @@
++// Field Comms Extended: voice replay (see VoiceReplay.h)
++#include "VoiceReplay.h"
++
++#include <algorithm>
++#include <cmath>
++
++CVoiceReplay *CVoiceReplay::getInstance() {
++    static CVoiceReplay instance;
++    return &instance;
++}
++
++void CVoiceReplay::finishCurrent(Speaker &speaker) {
++    if (static_cast<int>(speaker.current.size()) >= MIN_CLIP) {
++        speaker.clips.push_back(std::move(speaker.current));
++        while (static_cast<int>(speaker.clips.size()) > MAX_CLIPS) {
++            speaker.clips.pop_front();
++        }
++    }
++    speaker.current = std::vector<short>();
++}
++
++void CVoiceReplay::capture(const uint32_t id, const short *const samples, const int sampleCount, const int channels) {
++    if (samples == nullptr || sampleCount <= 0 || channels <= 0) {
++        return;
++    }
++    std::lock_guard<std::mutex> guard(m_Lock);
++    if (!m_Enabled || m_Consent.find(id) == m_Consent.end()) {
++        return;
++    }
++    auto it = m_Speakers.find(id);
++    if (it == m_Speakers.end()) {
++        if (static_cast<int>(m_Speakers.size()) >= MAX_SPEAKERS) {
++            return;
++        }
++        it = m_Speakers.emplace(id, Speaker()).first;
++    }
++    Speaker &speaker = it->second;
++    const auto now = std::chrono::steady_clock::now();
++    if (!speaker.current.empty() &&
++        std::chrono::duration_cast<std::chrono::milliseconds>(now - speaker.last).count() > GAP_MS) {
++        finishCurrent(speaker);
++    }
++    speaker.last = now;
++    const int room = MAX_CLIP - static_cast<int>(speaker.current.size());
++    const int take = std::min(room, sampleCount);
++    if (take <= 0) {
++        return;   // this utterance already fills a clip: the rest of it isn't kept
++    }
++    if (speaker.current.capacity() == 0) {
++        speaker.current.reserve(MAX_CLIP);
++    }
++    for (int i = 0; i < take; ++i) {
++        speaker.current.push_back(samples[i * channels]);   // first channel only (voice playback is mono)
++    }
++}
++
++void CVoiceReplay::setConsent(const bool enabled, const std::set<uint32_t> &ids) {
++    std::lock_guard<std::mutex> guard(m_Lock);
++    m_Enabled = enabled;
++    m_Consent = enabled ? ids : std::set<uint32_t>();
++    for (auto it = m_Speakers.begin(); it != m_Speakers.end();) {
++        if (m_Consent.find(it->first) == m_Consent.end()) {
++            it = m_Speakers.erase(it);
++        } else {
++            ++it;
++        }
++    }
++}
++
++void CVoiceReplay::clear() {
++    std::lock_guard<std::mutex> guard(m_Lock);
++    m_Speakers.clear();
++}
++
++bool CVoiceReplay::getClip(const uint32_t id, const bool latest, const float pitch, std::vector<short> &out) {
++    std::vector<short> clip;
++    {
++        std::lock_guard<std::mutex> guard(m_Lock);
++        if (!m_Enabled || m_Consent.find(id) == m_Consent.end()) {
++            return false;
++        }
++        auto it = m_Speakers.find(id);
++        if (it == m_Speakers.end()) {
++            return false;
++        }
++        Speaker &speaker = it->second;
++        if (!speaker.current.empty() &&
++            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - speaker.last).count() > GAP_MS) {
++            finishCurrent(speaker);
++        }
++        if (speaker.clips.empty()) {
++            return false;
++        }
++        size_t index = speaker.clips.size() - 1;
++        if (!latest) {
++            m_Rng = m_Rng * 1664525u + 1013904223u;
++            index = (m_Rng >> 8) % speaker.clips.size();
++        }
++        clip = speaker.clips[index];   // a copy: playback never touches the store
++    }
++    const double step = std::max(0.5, std::min(2.0, static_cast<double>(pitch)));
++    const size_t outCount = static_cast<size_t>(static_cast<double>(clip.size()) / step);
++    out.assign(outCount, 0);
++    for (size_t i = 0; i < outCount; ++i) {
++        const double src = static_cast<double>(i) * step;
++        const size_t a = static_cast<size_t>(src);
++        const size_t b = std::min(a + 1, clip.size() - 1);
++        const double t = src - static_cast<double>(a);
++        out[i] = static_cast<short>(clip[a] * (1.0 - t) + clip[b] * t);
++    }
++    // short fades so it doesn't click in and out
++    const size_t fade = std::min(out.size() / 4, static_cast<size_t>(RATE / 100));
++    for (size_t i = 0; i < fade; ++i) {
++        const double g = static_cast<double>(i) / static_cast<double>(fade);
++        out[i] = static_cast<short>(out[i] * g);
++        out[out.size() - 1 - i] = static_cast<short>(out[out.size() - 1 - i] * g);
++    }
++    return !out.empty();
++}
+diff --git a/extensions/src/ACRE2Core/VoiceReplay.h b/extensions/src/ACRE2Core/VoiceReplay.h
+new file mode 100644
+index 0000000..1cbdb8c
+--- /dev/null
++++ b/extensions/src/ACRE2Core/VoiceReplay.h
+@@ -0,0 +1,58 @@
++#pragma once
++// Field Comms Extended: voice replay.
++// A short, in-memory record of what opted-in players last said, so the game can play one of their clips back from a
++// position in the world (SCP Hazards and Anomalies' SCP-939 uses it; any mod can, through the RPCs in fce_voiceReplay.h).
++//
++// Privacy, enforced here rather than left to the scripts:
++//  - nothing is kept unless the feature is switched on (server setting) AND that player has opted in (their own setting);
++//  - clips live only in this process's memory: never written to disk, never sent anywhere;
++//  - a fixed small amount per player (MAX_CLIPS clips of up to MAX_CLIP_SECONDS), oldest overwritten;
++//  - a player's clips are dropped the moment they leave the consent list, and everything is dropped on mission end,
++//    pipe disconnect and plugin shutdown.
++#include <chrono>
++#include <cstdint>
++#include <deque>
++#include <map>
++#include <mutex>
++#include <set>
++#include <vector>
++
++class CVoiceReplay {
++public:
++    static CVoiceReplay *getInstance();
++
++    // TeamSpeak audio thread: a block of decoded voice from one speaker (before any ACRE effect)
++    void capture(const uint32_t id, const short *const samples, const int sampleCount, const int channels);
++
++    // Game: switch the feature on or off, and who has opted in (TeamSpeak client IDs). Anyone not listed is forgotten.
++    void setConsent(const bool enabled, const std::set<uint32_t> &ids);
++
++    // Forget everything
++    void clear();
++
++    // A copy of one of this speaker's clips, pitch-shifted by resampling and faded at the ends. False if there's none.
++    bool getClip(const uint32_t id, const bool latest, const float pitch, std::vector<short> &out);
++
++    static constexpr int RATE = 48000;              // TeamSpeak's voice playback rate
++    static constexpr int MAX_CLIP_SECONDS = 4;
++    static constexpr int MAX_CLIP = RATE * MAX_CLIP_SECONDS;
++    static constexpr int MIN_CLIP = RATE * 6 / 10;  // under 0.6 s isn't worth keeping
++    static constexpr int MAX_CLIPS = 3;             // per speaker
++    static constexpr int MAX_SPEAKERS = 32;         // about 1.1 MB each at most
++    static constexpr int GAP_MS = 350;              // a pause this long ends an utterance
++
++private:
++    CVoiceReplay() = default;
++    struct Speaker {
++        std::deque<std::vector<short>> clips;
++        std::vector<short> current;
++        std::chrono::steady_clock::time_point last;
++    };
++    static void finishCurrent(Speaker &speaker);
++
++    std::mutex m_Lock;
++    bool m_Enabled = false;
++    std::set<uint32_t> m_Consent;
++    std::map<uint32_t, Speaker> m_Speakers;
++    uint32_t m_Rng = 0x9E3779B9u;
++};
+diff --git a/extensions/src/ACRE2Core/ext_reset.h b/extensions/src/ACRE2Core/ext_reset.h
+index 42781bc..6e0ae0d 100644
+--- a/extensions/src/ACRE2Core/ext_reset.h
++++ b/extensions/src/ACRE2Core/ext_reset.h
+@@ -4,6 +4,8 @@
+ #include "IRpcFunction.h"
+ #include "Types.h"
+ #include "Engine.h"
++#include "VoiceReplay.h" // Field Comms Extended
++#include <set>
+ 
+ RPC_FUNCTION(ext_reset) {
+     const acre::id_t id = vMessage->getParameterAsInt(0);
+@@ -23,6 +25,9 @@ RPC_FUNCTION(ext_reset) {
+     // We leave this here so SQF can force a full unmute, though.
+     CEngine::getInstance()->getClient()->unMuteAll();
+ 
++    // Field Comms Extended: the game has gone (mission end, pipe disconnect): forget every voice clip
++    CVoiceReplay::getInstance()->setConsent(false, std::set<uint32_t>());
++
+     return acre::Result::ok;
+ }
+ public:
+diff --git a/extensions/src/ACRE2Core/fce_voiceReplay.h b/extensions/src/ACRE2Core/fce_voiceReplay.h
+new file mode 100644
+index 0000000..3bfec77
+--- /dev/null
++++ b/extensions/src/ACRE2Core/fce_voiceReplay.h
+@@ -0,0 +1,109 @@
++#pragma once
++// Field Comms Extended: voice replay RPCs (game -> plugin). See VoiceReplay.h for what's kept and the privacy rules.
++//
++//   fce_setVoiceReplay:   enabled (0/1), opted-in TeamSpeak IDs as one parameter "12;40;7"
++//   fce_playVoiceReplay:  TeamSpeak ID, position x, y, z (ASL), direction x, y, z, volume 0..1, pitch, latest (0/1), tag
++//                         -> replies fce_handleVoiceReplay: tag, 1 if it played / 0 if there was nothing to play
++//   fce_clearVoiceReplay: (none) forget every clip
++#include "compat.h"
++#include "Types.h"
++#include "Macros.h"
++#include "Log.h"
++#include "IRpcFunction.h"
++#include "IServer.h"
++#include "Engine.h"
++#include "TextMessage.h"
++#include "SoundEngine.h"
++#include "SoundMixer.h"
++#include "SoundMonoChannel.h"
++#include "VoiceReplay.h"
++
++#include <cstdlib>
++#include <set>
++#include <string>
++#include <vector>
++
++RPC_FUNCTION(fce_setVoiceReplay) {
++    const bool enabled = vMessage->getParameterAsInt(0) == 1;
++    std::set<uint32_t> ids;
++    if (vMessage->getParameterCount() > 1 && vMessage->getParameter(1) != nullptr) {
++        const std::string list = std::string(reinterpret_cast<const char *>(vMessage->getParameter(1)));
++        size_t start = 0;
++        while (start <= list.size()) {
++            const size_t end = list.find(';', start);
++            const std::string part = list.substr(start, end == std::string::npos ? std::string::npos : end - start);
++            if (!part.empty()) {
++                ids.insert(static_cast<uint32_t>(std::strtoul(part.c_str(), nullptr, 10)));
++            }
++            if (end == std::string::npos) {
++                break;
++            }
++            start = end + 1;
++        }
++    }
++    CVoiceReplay::getInstance()->setConsent(enabled, ids);
++    return acre::Result::ok;
++}
++public:
++    inline void setName(const char *const value) final { m_Name = value; }
++    inline const char* getName() const final { return m_Name; }
++
++protected:
++    const char* m_Name;
++};
++
++RPC_FUNCTION(fce_playVoiceReplay) {
++    const uint32_t id = static_cast<uint32_t>(vMessage->getParameterAsInt(0));
++    // ACRE's own sound calls swap y and z the same way (playLoadedSound)
++    const acre::vec3_fp32_t position(vMessage->getParameterAsFloat(1), vMessage->getParameterAsFloat(3), vMessage->getParameterAsFloat(2));
++    const acre::vec3_fp32_t direction(vMessage->getParameterAsFloat(4), vMessage->getParameterAsFloat(6), vMessage->getParameterAsFloat(5));
++    const float32_t volume = vMessage->getParameterAsFloat(7);
++    const float32_t pitch = vMessage->getParameterAsFloat(8);
++    const bool latest = vMessage->getParameterAsInt(9) == 1;
++    const std::string tag = vMessage->getParameterCount() > 10 && vMessage->getParameter(10) != nullptr
++        ? std::string(reinterpret_cast<const char *>(vMessage->getParameter(10))) : std::string("");
++
++    std::vector<short> clip;
++    bool played = false;
++    if (CVoiceReplay::getInstance()->getClip(id, latest, pitch, clip)) {
++        CSoundChannelMono *channel = nullptr;
++        CSoundMixer *mixer = CEngine::getInstance()->getSoundEngine()->getSoundMixer();
++        mixer->lock();
++        if (mixer->acquireChannel(&channel, static_cast<int>(clip.size()), true) && channel != nullptr) {
++            channel->setEffectInsert(0, "acre_volume");
++            channel->getEffectInsert(0)->setParam("volume", volume);
++            channel->setMixdownEffectInsert(0, "acre_positional");
++            channel->getMixdownEffectInsert(0)->setParam("speakerPosX", position.x);
++            channel->getMixdownEffectInsert(0)->setParam("speakerPosY", position.y);
++            channel->getMixdownEffectInsert(0)->setParam("speakerPosZ", position.z);
++            channel->getMixdownEffectInsert(0)->setParam("headVectorX", direction.x);
++            channel->getMixdownEffectInsert(0)->setParam("headVectorY", direction.y);
++            channel->getMixdownEffectInsert(0)->setParam("headVectorZ", direction.z);
++            channel->getMixdownEffectInsert(0)->setParam("isWorld", 0x00000000);
++            channel->In(clip.data(), static_cast<int>(clip.size()), 1);
++            played = true;
++        }
++        mixer->unlock();
++    }
++    vServer->sendMessage(CTextMessage::formatNewMessage("fce_handleVoiceReplay", "%s,%d,", tag.c_str(), played ? 1 : 0));
++    return acre::Result::ok;
++}
++public:
++    inline void setName(const char *const value) final { m_Name = value; }
++    inline const char* getName() const final { return m_Name; }
++
++protected:
++    const char* m_Name;
++};
++
++RPC_FUNCTION(fce_clearVoiceReplay) {
++    CVoiceReplay::getInstance()->clear();
++    return acre::Result::ok;
++}
++public:
++    inline void setName(const char *const value) final { m_Name = value; }
++    inline const char* getName() const final { return m_Name; }
++
++protected:
++    const char* m_Name;
++};

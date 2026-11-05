@@ -1,5 +1,5 @@
 # Field Comms Extended: builds ACRE's TeamSpeak plugin (acre2_win32.dll / acre2_win64.dll) from the ACRE2 source this
-# fork is based on, with Field Comms Extended's plugin changes (plugin/voice-replay.patch) applied.
+# fork is based on, with Field Comms Extended's plugin changes (the files in plugin/ACRE2Core) copied over it.
 # Only the TeamSpeak plugin is rebuilt: ACRE's game-side DLLs (BattlEye-signed by IDI-Systems) stay as released.
 #
 # Run it from the Actions tab (workflow_dispatch) or by pushing a tag. The DLLs come out as the "plugin" artifact:
@@ -22,23 +22,26 @@ jobs:
         arch: [x86, x64]
     steps:
     - name: Check out Field Comms Extended
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
       with:
         path: fce
 
     - name: Check out ACRE2 ${{ env.ACRE_TAG }}
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
       with:
         repository: IDI-Systems/acre2
         ref: ${{ env.ACRE_TAG }}
         path: acre2
 
     - name: Apply Field Comms Extended plugin changes
-      shell: bash
+      shell: pwsh
       run: |
+        # Whole files, not the patch: git on Windows changes line endings, which breaks applying a patch.
+        # (plugin/voice-replay.patch is the same change, kept for reading and for rebasing onto a newer ACRE.)
+        Copy-Item -Path fce\plugin\ACRE2Core\* -Destination acre2\extensions\src\ACRE2Core\ -Force
+        Get-ChildItem fce\plugin\ACRE2Core | ForEach-Object { "copied " + $_.Name }
         cd acre2
-        git apply --whitespace=nowarn ../fce/plugin/voice-replay.patch
-        git diff --stat
+        git status --short
 
     - name: DirectX SDK (June 2010) - ACRE's build needs its headers and libs
       shell: pwsh
